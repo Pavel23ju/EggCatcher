@@ -7,6 +7,15 @@
 #include <algorithm>
 #include <QThread>
 #include <QDebug>
+#include <QPainterPath>
+#include <QKeyEvent>
+#include <QFile>
+#include <QTextStream>
+#include <QDir>
+
+// ======================================================
+// PIXELATED EGG SHAPE DRAWING FUNCTION (Unchanged)
+// ======================================================
 static void drawEggShape(QPainter &p, int cx, int cy, int box)
 {
     p.setBrush(Qt::white);
@@ -126,12 +135,14 @@ static void drawEggShape(QPainter &p, int cx, int cy, int box)
     }
 }
 
-#include <QPainterPath>
-#include <QKeyEvent>
+// ======================================================
+// CONSTRUCTOR
+// ======================================================
 
 MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent),
     ui(new Ui::MainWindow),
+    leaderboardManager(), // Initialize LeaderboardManager
     gameTimer(nullptr),
     grid_box(6),
     highScore(0),
@@ -156,6 +167,8 @@ MainWindow::MainWindow(QWidget *parent)
     accumulator(0.0f),
     gameOver(false),
     gameRunning(false),
+    showMenu(true), // Initial state: Menu
+    showLeaderboard(false), // Initial state: Not Leaderboard
     score(0),
     lives(3),
     flashAlpha(0.0f),
@@ -170,7 +183,7 @@ MainWindow::MainWindow(QWidget *parent)
         if (grid_size <= 0)
             grid_size = 600;
     }
-    loadHighScore();
+    loadHighScore(); // Load local high score for HUD
     cols = qMax(40, grid_size / grid_box);
     rows = qMax(30, grid_size / grid_box);
 
@@ -199,6 +212,10 @@ MainWindow::MainWindow(QWidget *parent)
     soundLose.setSource(QUrl::fromLocalFile("C:/Projects/EggCatcher/sfx/lose.wav"));
     soundLose.setVolume(0.9f);
 
+    // In mainwindow.cpp, near the top of the MainWindow constructor
+    qDebug() << "Leaderboard file path:" << QDir::tempPath() + "/eggcatcher_leaderboard.txt";
+
+
     // Drop columns
     dropColumns.clear();
     int mid = cols / 2;
@@ -220,9 +237,37 @@ MainWindow::MainWindow(QWidget *parent)
 
     frameClock.start();
 
-    // start paused
-    gameRunning = false;
-    gameOver = false;
+    // --- MENU UI Setup ---
+    playButton = new QPushButton("PLAY", ui->frame);
+    leaderboardButton = new QPushButton("LEADERBOARD", ui->frame);
+    nameInput = new QLineEdit(ui->frame);
+    backToMenuButton = new QPushButton("Back to Menu", ui->frame);
+
+    // Set retro-looking styles
+    QString buttonStyle = "QPushButton { font-size: 20px; color: yellow; background-color: #2a2a2a; border: 2px solid white; padding: 10px; } QPushButton:hover { background-color: #444444; }";
+    QString inputStyle = "QLineEdit { font-size: 18px; color: white; background-color: #2a2a2a; border: 2px solid #555555; padding: 8px; }";
+
+    playButton->setStyleSheet(buttonStyle);
+    leaderboardButton->setStyleSheet(buttonStyle);
+    backToMenuButton->setStyleSheet(buttonStyle);
+    nameInput->setStyleSheet(inputStyle);
+    nameInput->setMaxLength(10);
+    nameInput->setText(playerName);
+
+    // Initial positioning
+    playButton->setGeometry(220, 370, 160, 50);
+    leaderboardButton->setGeometry(220, 430, 160, 50);
+    nameInput->setGeometry(200, 310, 200, 40);
+    backToMenuButton->setGeometry(220, 570, 160, 50);
+
+    // Connect new signals
+    connect(playButton, &QPushButton::clicked, this, &MainWindow::startGameButtonClicked);
+    connect(leaderboardButton, &QPushButton::clicked, this, &MainWindow::showLeaderboardButtonClicked);
+    connect(backToMenuButton, &QPushButton::clicked, [this](){
+        showLeaderboard = false;
+        showMenu = true;
+    });
+
 }
 
 MainWindow::~MainWindow()
@@ -230,8 +275,9 @@ MainWindow::~MainWindow()
     delete ui;
 }
 
-#include <QFile>
-#include <QTextStream>
+// ======================================================
+// HIGH SCORE PERSISTENCE (Local)
+// ======================================================
 
 void MainWindow::loadHighScore() {
     QFile file("highscore.txt");
@@ -253,6 +299,9 @@ void MainWindow::saveHighScore() {
     }
 }
 
+// ======================================================
+// INPUT HANDLING
+// ======================================================
 
 void MainWindow::keyPressEvent(QKeyEvent *event)
 {
@@ -260,16 +309,21 @@ void MainWindow::keyPressEvent(QKeyEvent *event)
         return;
 
     if (gameOver && event->key() == Qt::Key_R) {
+        // If game over, and R is pressed, reset the game
         resetGame();
         return;
-    }
-
-    if (!gameRunning && event->key() == Qt::Key_Return) {
-        gameRunning = true;
+    }else if(gameOver && event->key() == Qt::Key_M){
+        gameRunning = false;
+        showMenu = true;
+        // Ensure buttons are shown on the next gameTick
+        nameInput->show();
+        playButton->show();
+        leaderboardButton->show();
+        backToMenuButton->hide();
         return;
     }
 
-    if (gameOver || !gameRunning)
+    if (!gameRunning || gameOver)
         return;
 
     if (event->key() == Qt::Key_A || event->key() == Qt::Key_Left)
@@ -291,6 +345,35 @@ void MainWindow::keyReleaseEvent(QKeyEvent *event)
         moveRight = false;
 }
 
+// ======================================================
+// GAME/MENU STATE HANDLERS
+// ======================================================
+
+void MainWindow::startGameButtonClicked() {
+    showMenu = false;
+    gameRunning = true;
+    resetGame();
+}
+
+void MainWindow::showLeaderboardButtonClicked() {
+    showMenu = false;
+    showLeaderboard = true;
+}
+
+void MainWindow::handleGameOver()
+{
+    // Update local high score for the HUD
+    if (score > highScore) {
+        highScore = score;
+        saveHighScore();
+    }
+
+    // Submit score to the leaderboard manager
+    if (score > 0) {
+        leaderboardManager.addScore(playerName, score);
+    }
+}
+
 void MainWindow::resetGame()
 {
     ui->scoreLabel->show();
@@ -303,29 +386,57 @@ void MainWindow::resetGame()
     basketXVelocity = 0.0f;
     basketTargetVel = 0.0f;
     gameOver = false;
-    saveHighScore();
     moveRight = false;
     moveLeft = false;
     accumulator = 0.0f;
     flashColor = QColor();
     frameClock.restart();
     gameRunning = true;
+    showMenu = false;
+    showLeaderboard = false;
+
+    // Hide Menu UI
+    nameInput->hide();
+    playButton->hide();
+    leaderboardButton->hide();
+    backToMenuButton->hide();
+
     gameTimer->start();
 }
 
-void MainWindow::drawStartScreen()
+// ======================================================
+// SCREEN DRAWING METHODS
+// ======================================================
+
+void MainWindow::drawMenu()
 {
     QPixmap pix = background;
     QPainter p(&pix);
     p.setRenderHint(QPainter::Antialiasing, true);
 
+    p.setPen(Qt::yellow);
+    p.setFont(QFont("Comic Sans MS", 36, QFont::Bold));
+    p.drawText(pix.rect().adjusted(0, -400, 0, 0), Qt::AlignCenter,
+               "EGG CATCHER");
+
     p.setPen(Qt::white);
-    p.setFont(QFont("Arial", 24, QFont::Bold));
-    p.drawText(pix.rect(), Qt::AlignCenter,
-               "EGG CATCHER\n\nPress ENTER to Start");
+    p.setFont(QFont("Arial", 18));
+    p.drawText(200, 280, "Player Name:");
+
 
     p.end();
     ui->frame->setPixmap(pix);
+
+    // Show/Hide UI elements
+    nameInput->show();
+    playButton->show();
+    leaderboardButton->show();
+    backToMenuButton->hide();
+    ui->scoreLabel->hide();
+    ui->livesLabel->hide();
+
+    // Save current name
+    playerName = nameInput->text().trimmed().isEmpty() ? "Player" : nameInput->text().trimmed();
 }
 
 void MainWindow::drawGameOver()
@@ -339,23 +450,96 @@ void MainWindow::drawGameOver()
     p.setPen(Qt::red);
     p.setFont(QFont("Arial", 28, QFont::Bold));
     p.drawText(pix.rect(), Qt::AlignCenter,
-               "GAME OVER\nPress R to Restart");
+               "GAME OVER\n\nScore: " + QString::number(score) + "\n\nPress R to Restart and M to go back to Menu");
 
     p.end();
     ui->frame->setPixmap(pix);
+
+    // Hide all menu/leaderboard buttons when game over is displayed
+    nameInput->hide();
+    playButton->hide();
+    leaderboardButton->hide();
+    backToMenuButton->hide();
 }
+
+
+void MainWindow::drawLeaderboard()
+{
+    QPixmap pix = background;
+    QPainter p(&pix);
+    p.setRenderHint(QPainter::Antialiasing, true);
+
+    QVector<ScoreEntry> topScores = leaderboardManager.loadScores();
+
+    p.setPen(Qt::cyan);
+    p.setFont(QFont("Comic Sans MS", 30, QFont::Bold));
+    p.drawText(pix.rect().adjusted(0, -500, 0, 0), Qt::AlignCenter,
+               "TOP EGG CATCHERS");
+
+    int yPos = 200;
+    p.setFont(QFont("Arial", 20, QFont::Bold));
+    p.setPen(Qt::white);
+
+    // Draw Headers
+    p.drawText(150, yPos, "RANK");
+    p.drawText(250, yPos, "SCORE");
+    p.drawText(400, yPos, "NAME");
+    yPos += 30;
+
+    for (int i = 0; i < 5; ++i) {
+        p.setPen(i == 0 ? Qt::yellow : Qt::white);
+        p.setFont(QFont("Arial", 18));
+        QString rank = QString::number(i + 1);
+        QString scoreText = "---";
+        QString nameText = "Empty";
+
+        if (i < topScores.size()) {
+            scoreText = QString::number(topScores[i].score);
+            nameText = topScores[i].name;
+        }
+
+        p.drawText(150, yPos, rank);
+        p.drawText(250, yPos, scoreText);
+        p.drawText(400, yPos, nameText);
+        yPos += 40;
+    }
+
+
+    p.end();
+    ui->frame->setPixmap(pix);
+
+    // Hide/Show UI elements
+    nameInput->hide();
+    playButton->hide();
+    leaderboardButton->hide();
+    backToMenuButton->show();
+    ui->scoreLabel->hide();
+    ui->livesLabel->hide();
+}
+
+
+// ======================================================
+// MAIN GAME LOOP (gameTick)
+// ======================================================
 
 void MainWindow::gameTick()
 {
+    // State machine for screens
+    if (showMenu) {
+        drawMenu();
+        return;
+    }
+    if (showLeaderboard) {
+        drawLeaderboard();
+        return;
+    }
 
     if (gameOver) {
+        handleGameOver(); // Handle score submission when game over is first hit
         drawGameOver();
         return;
     }
-    if (!gameRunning) {
-        drawStartScreen();
-        return;
-    }
+
 
     // Elapsed real time
     float dt = frameClock.restart() / 1000.0f;
@@ -405,6 +589,9 @@ void MainWindow::gameTick()
 
 }
 
+// ======================================================
+// PHYSICS UPDATE
+// ======================================================
 
 void MainWindow::updatePhysics(float dt)
 {
@@ -564,7 +751,7 @@ void MainWindow::updatePhysics(float dt)
     eggs = survivors;
     if (caughtAny) score++;
     if (lostAny) lives--;
-    if (score > highScore) highScore = score;  // <--- update high score
+    if (score > highScore) highScore = score;
     if(lives <= 0) gameOver = true;
 
 
@@ -609,6 +796,10 @@ void MainWindow::updatePhysics(float dt)
     particles = aliveParticles;
 
 }
+
+// ======================================================
+// EGG DRAWING UTILITY (Unchanged)
+// ======================================================
 
 void MainWindow::drawEggShape(QPainter &p, const Egg &egg, float cellSize)
 {
@@ -672,6 +863,9 @@ void MainWindow::drawEggShape(QPainter &p, const Egg &egg, float cellSize)
 }
 
 
+// ======================================================
+// GAME DRAWING
+// ======================================================
 
 void MainWindow::drawGame(float alpha)
 {

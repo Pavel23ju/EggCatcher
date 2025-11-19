@@ -5,6 +5,8 @@
 #include <QDebug>
 #include <QStringList>
 #include <QDir>
+#include <algorithm> // Ensure <algorithm> is included
+#include <functional> // Ensure <functional> is included for std::greater (though we use a lambda)
 
 LeaderboardManager::LeaderboardManager(const QString& filename) {
     // Save the file in a temporary location or user's home path for persistence
@@ -32,7 +34,11 @@ QVector<ScoreEntry> LeaderboardManager::loadScores() {
     }
 
     // Sort the scores and keep only the top 5
-    std::sort(scores.begin(), scores.end(), std::greater<ScoreEntry>());
+    // [CHANGE 1] Use lambda for correct descending sort
+    std::sort(scores.begin(), scores.end(), [](const ScoreEntry& a, const ScoreEntry& b) {
+        return a.score > b.score;
+    });
+
     if (scores.size() > 5) {
         scores.resize(5);
     }
@@ -44,7 +50,11 @@ void LeaderboardManager::addScore(const QString& name, int newScore) {
     scores.push_back({newScore, name});
 
     // Sort and keep the top 5
-    std::sort(scores.begin(), scores.end(), std::greater<ScoreEntry>());
+    // [CHANGE 2] Use lambda for correct descending sort
+    std::sort(scores.begin(), scores.end(), [](const ScoreEntry& a, const ScoreEntry& b) {
+        return a.score > b.score;
+    });
+
     if (scores.size() > 5) {
         scores.resize(5);
     }
