@@ -8,6 +8,10 @@
 #include <QVector>
 #include <QPixmap>
 #include <QPointF>
+#include <QLineEdit> // [CHANGE] Added for name input
+#include <QPushButton> // [CHANGE] Added for menu buttons
+
+#include "leaderboardmanager.h"
 
 QT_BEGIN_NAMESPACE
 namespace Ui { class MainWindow; }
@@ -49,8 +53,21 @@ protected:
 
 private slots:
     void gameTick();
+    void startGameButtonClicked();
+    void showLeaderboardButtonClicked();
 
 private:
+
+    LeaderboardManager leaderboardManager;
+    QString playerName = "Player"; // [CHANGE] Default player name
+
+    // [CHANGE] UI elements for the menu/leaderboard
+    QPushButton *playButton;
+    QPushButton *leaderboardButton;
+    QLineEdit *nameInput;
+    // [CHANGE] Button to start game from leaderboard screen
+    QPushButton *backToMenuButton;
+
     QVector<Particle> particles;
 
 
@@ -108,6 +125,8 @@ private:
 
     bool gameOver;
     bool gameRunning;
+    bool showMenu;
+    bool showLeaderboard;
 
     int score;
     int lives;
@@ -120,10 +139,13 @@ private:
     void updatePhysics(float dt);
     void drawGame(float alpha);
     void drawGameOver();
+    void drawMenu();
+    void drawLeaderboard();
     void drawStartScreen();
     void drawEggShape(QPainter &p, const Egg &egg, float cellSize);
     void loadHighScore();
     void saveHighScore();
+    void handleGameOver();
 };
 
 #endif // MAINWINDOW_H
